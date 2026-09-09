@@ -3,17 +3,15 @@ const express = require('express');
 const {
   stkPush,
   mpesaCallback,
+  paymentStatus,
 } = require('../controllers/mpesaController');
 
 const router = express.Router();
 
-
-// POST /api/payments/mpesa/stk-push
 router.post('/stk-push', stkPush);
 
-
-// POST /api/payments/mpesa/callback
 router.post('/callback', mpesaCallback);
 
+router.get('/status/:checkoutRequestId', paymentStatus);
 
 module.exports = router;

@@ -1,23 +1,13 @@
+const { initiateSTKPush } = require('../services/mpesaService');
 const {
-  initiateSTKPush,
-} = require('../services/mpesaService');
-
-
-// ============================================================
-// STK PUSH
-// ============================================================
+  createPayment,
+  updatePayment,
+  getPayment,
+} = require('../services/paymentStore');
 
 async function stkPush(req, res) {
   try {
-    const {
-      phoneNumber,
-      amount,
-      orderId,
-    } = req.body;
-
-    // --------------------------------------------------------
-    // VALIDATION
-    // --------------------------------------------------------
+    const { phoneNumber, amount, orderId } = req.body;
 
     if (!phoneNumber) {
       return res.status(400).json({
@@ -40,10 +30,6 @@ async function stkPush(req, res) {
       });
     }
 
-    // --------------------------------------------------------
-    // INITIATE PAYMENT
-    // --------------------------------------------------------
-
     const result = await initiateSTKPush({
       phoneNumber,
       amount,
@@ -51,12 +37,31 @@ async function stkPush(req, res) {
       transactionDescription: `Payment for order ${orderId}`,
     });
 
+    if (result.ResponseCode !== '0') {
+      return res.status(400).json({
+        success: false,
+        message: result.ResponseDescription || 'STK Push failed',
+        data: result,
+      });
+    }
+
+    createPayment({
+      orderId,
+      checkoutRequestId: result.CheckoutRequestID,
+      merchantRequestId: result.MerchantRequestID,
+      amount,
+      phoneNumber,
+    });
+
     return res.status(200).json({
       success: true,
       message: 'STK Push initiated successfully',
-      data: result,
+      data: {
+        checkoutRequestId: result.CheckoutRequestID,
+        merchantRequestId: result.MerchantRequestID,
+        customerMessage: result.CustomerMessage,
+      },
     });
-
   } catch (error) {
     console.error(
       'M-Pesa STK Push Error:',
@@ -66,15 +71,9 @@ async function stkPush(req, res) {
     return res.status(500).json({
       success: false,
       message: 'Failed to initiate M-Pesa payment',
-      error: error.response?.data || error.message,
     });
   }
 }
-
-
-// ============================================================
-// CALLBACK
-// ============================================================
 
 async function mpesaCallback(req, res) {
   try {
@@ -83,8 +82,7 @@ async function mpesaCallback(req, res) {
       JSON.stringify(req.body, null, 2)
     );
 
-    const callback =
-      req.body?.Body?.stkCallback;
+    const callback = req.body?.Body?.stkCallback;
 
     if (!callback) {
       return res.status(400).json({
@@ -93,41 +91,37 @@ async function mpesaCallback(req, res) {
       });
     }
 
-    const resultCode = callback.ResultCode;
+    const checkoutRequestId = callback.CheckoutRequestID;
 
-    if (resultCode === 0) {
-      console.log('Payment successful');
+    if (callback.ResultCode === 0) {
+      const items = callback.CallbackMetadata?.Item || [];
 
-      console.log(
-        'Callback Metadata:',
-        callback.CallbackMetadata
-      );
+      const getMetadata = (name) =>
+        items.find((item) => item.Name === name)?.Value;
 
-      // TODO:
-      // Save payment to database
-      // Update order status
-      // Mark payment as completed
+      const payment = updatePayment(checkoutRequestId, {
+        status: 'paid',
+        message: 'Payment received successfully.',
+        receiptNumber: getMetadata('MpesaReceiptNumber'),
+        transactionDate: getMetadata('TransactionDate'),
+      });
+
+      console.log('Payment successful:', payment);
     } else {
-      console.log(
-        'Payment failed:',
-        callback.ResultDesc
-      );
+      updatePayment(checkoutRequestId, {
+        status: 'failed',
+        message: callback.ResultDesc || 'M-Pesa payment failed.',
+      });
 
-      // TODO:
-      // Update payment status to failed
+      console.log('Payment failed:', callback.ResultDesc);
     }
 
-    // Safaricom expects a response
     return res.status(200).json({
       ResultCode: 0,
       ResultDesc: 'Callback received successfully',
     });
-
   } catch (error) {
-    console.error(
-      'Callback Error:',
-      error.message
-    );
+    console.error('Callback Error:', error.message);
 
     return res.status(500).json({
       ResultCode: 1,
@@ -136,8 +130,26 @@ async function mpesaCallback(req, res) {
   }
 }
 
+async function paymentStatus(req, res) {
+  const { checkoutRequestId } = req.params;
+
+  const payment = getPayment(checkoutRequestId);
+
+  if (!payment) {
+    return res.status(404).json({
+      success: false,
+      message: 'Payment not found',
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    data: payment,
+  });
+}
 
 module.exports = {
   stkPush,
   mpesaCallback,
+  paymentStatus,
 };
