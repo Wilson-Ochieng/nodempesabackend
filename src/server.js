@@ -52,16 +52,19 @@ app.use('/api/email', emailRoutes);
 // ============================================================
 
 const PORT = process.env.PORT || 10000;
-const { verifyEmailConnection } = require('./services/emailService');
 
-verifyEmailConnection();
+const {
+  verifyEmailConnection,
+} = require('./services/emailService');
 
 app.listen(
   PORT,
   '0.0.0.0',
-  () => {
+  async () => {
     console.log(
       `Server running on port ${PORT}`
     );
+
+    await verifyEmailConnection();
   }
 );
