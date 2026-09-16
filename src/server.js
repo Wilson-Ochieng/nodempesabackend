@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 
 const mpesaRoutes = require('./routes/mpesaRoutes');
+const emailRoutes = require('./routes/emailRoutes');
 
 const app = express();
 
@@ -41,6 +42,7 @@ app.use(
   '/api/payments/mpesa',
   mpesaRoutes
 );
+app.use('/api/email', emailRoutes);
 
 
 // ============================================================
