@@ -5,9 +5,19 @@ const {
   getPayment,
 } = require('../services/paymentStore');
 
+const {
+  sendPaymentConfirmationEmail,
+} = require('../services/emailService');
+
 async function stkPush(req, res) {
   try {
-    const { phoneNumber, amount, orderId } = req.body;
+    const {
+      phoneNumber,
+      amount,
+      orderId,
+      customerName,
+      customerEmail,
+    } = req.body;
 
     if (!phoneNumber) {
       return res.status(400).json({
@@ -15,6 +25,22 @@ async function stkPush(req, res) {
         message: 'Phone number is required',
       });
     }
+
+    if (!customerName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer name is required',
+      });
+    }
+
+    if (!customerEmail || !customerEmail.includes('@')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid customer email is required',
+      });
+    }
+
+
 
     if (!amount || amount <= 0) {
       return res.status(400).json({
@@ -51,6 +77,8 @@ async function stkPush(req, res) {
       merchantRequestId: result.MerchantRequestID,
       amount,
       phoneNumber,
+      customerName,
+      customerEmail,
     });
 
     return res.status(200).json({
@@ -93,21 +121,72 @@ async function mpesaCallback(req, res) {
 
     const checkoutRequestId = callback.CheckoutRequestID;
 
+
     if (callback.ResultCode === 0) {
       const items = callback.CallbackMetadata?.Item || [];
 
       const getMetadata = (name) =>
         items.find((item) => item.Name === name)?.Value;
 
+      const receiptNumber = getMetadata('MpesaReceiptNumber');
+      const transactionDate = getMetadata('TransactionDate');
+
+      // Get the existing payment before updating it.
+      const existingPayment = getPayment(checkoutRequestId);
+
+      if (!existingPayment) {
+        console.error(
+          'Payment not found for checkout request:',
+          checkoutRequestId
+        );
+
+        return res.status(200).json({
+          ResultCode: 0,
+          ResultDesc: 'Callback received but payment was not found',
+        });
+      }
+
+      // Prevent duplicate payment emails if Safaricom
+      // sends the callback more than once.
+      const alreadyPaid = existingPayment.status === 'paid';
+
       const payment = updatePayment(checkoutRequestId, {
         status: 'paid',
         message: 'Payment received successfully.',
-        receiptNumber: getMetadata('MpesaReceiptNumber'),
-        transactionDate: getMetadata('TransactionDate'),
+        receiptNumber,
+        transactionDate,
       });
 
       console.log('Payment successful:', payment);
-    } else {
+
+      if (!alreadyPaid) {
+        try {
+          await sendPaymentConfirmationEmail({
+            customerName: payment.customerName,
+            customerEmail: payment.customerEmail,
+            orderId: payment.orderId,
+            total: payment.amount,
+            receiptNumber,
+          });
+
+          console.log(
+            `Payment confirmation email sent for order ${payment.orderId}`
+          );
+        } catch (emailError) {
+
+          console.error(
+            'Payment confirmation email failed:',
+            emailError.message
+          );
+        }
+      } else {
+        console.log(
+          `Duplicate callback ignored for order ${existingPayment.orderId}`
+        );
+      }
+    }
+
+    else {
       updatePayment(checkoutRequestId, {
         status: 'failed',
         message: callback.ResultDesc || 'M-Pesa payment failed.',

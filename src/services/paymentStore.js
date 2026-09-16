@@ -6,6 +6,8 @@ function createPayment({
   merchantRequestId,
   amount,
   phoneNumber,
+  customerName,
+  customerEmail,
 }) {
   payments.set(checkoutRequestId, {
     orderId,
@@ -13,6 +15,8 @@ function createPayment({
     merchantRequestId,
     amount,
     phoneNumber,
+    customerName,
+    customerEmail,
     status: 'pending',
     message: 'STK Push sent. Waiting for payment.',
     receiptNumber: null,
@@ -40,6 +44,8 @@ function updatePayment(checkoutRequestId, data) {
 function getPayment(checkoutRequestId) {
   return payments.get(checkoutRequestId);
 }
+
+
 
 module.exports = {
   createPayment,
