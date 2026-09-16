@@ -1,19 +1,17 @@
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-    host: '74.125.199.108',
-    port: 587,
-    secure: false,
-    family: 4,
+  host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
+  port: Number(process.env.SMTP_PORT || 587),
+  secure: process.env.SMTP_SECURE === 'true',
 
-    tls: {
-        servername: 'smtp.gmail.com',
-    },
+  // Force IPv4
+  family: 4,
 
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-    },
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
 });
 // ============================================================
 // SMTP CONNECTION VERIFICATION

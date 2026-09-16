@@ -7,42 +7,8 @@ const mpesaRoutes = require('./routes/mpesaRoutes');
 const emailRoutes = require('./routes/emailRoutes');
 
 const app = express();
-const dns = require('dns');
 
-dns.lookup(
-  'smtp.gmail.com',
-  { family: 4 },
-  (error, address, family) => {
-    if (error) {
-      console.error('IPv4 DNS ERROR:', error.message);
-      return;
-    }
 
-    console.log('Gmail IPv4:', address);
-    console.log('IP Family:', family);
-  }
-);
-const net = require('net');
-
-const socket = net.createConnection({
-  host: '142.250.107.109',
-  port: 587,
-  timeout: 10000,
-});
-
-socket.on('connect', () => {
-  console.log('SMTP TCP connection successful');
-  socket.end();
-});
-
-socket.on('timeout', () => {
-  console.error('SMTP TCP connection timed out');
-  socket.destroy();
-});
-
-socket.on('error', (error) => {
-  console.error('SMTP TCP connection error:', error.message);
-});
 
 
 // ============================================================
