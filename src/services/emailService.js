@@ -13,21 +13,31 @@ const transporter = nodemailer.createTransport({
     pass: process.env.SMTP_PASS,
   },
 });
+
+
 // ============================================================
 // SMTP CONNECTION VERIFICATION
 // ============================================================
 
 async function verifyEmailConnection() {
-    try {
-        await transporter.verify();
+  console.log('======================================');
+  console.log('BREVO SMTP CONFIGURATION');
+  console.log('Host: smtp-relay.brevo.com');
+  console.log('Port: 587');
+  console.log('Secure: false');
+  console.log('User:', process.env.SMTP_USER);
+  console.log('======================================');
 
-        console.log('Email SMTP connection verified successfully.');
-    } catch (error) {
-        console.error(
-            'Email SMTP connection failed:',
-            error.message
-        );
-    }
+  try {
+    await transporter.verify();
+
+    console.log('BREVO SMTP CONNECTION VERIFIED');
+  } catch (error) {
+    console.error('BREVO SMTP CONNECTION FAILED');
+    console.error('Message:', error.message);
+    console.error('Code:', error.code);
+    console.error('Command:', error.command);
+  }
 }
 
 // ============================================================
