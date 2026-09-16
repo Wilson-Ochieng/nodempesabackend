@@ -22,6 +22,27 @@ dns.lookup(
     console.log('IP Family:', family);
   }
 );
+const net = require('net');
+
+const socket = net.createConnection({
+  host: '142.250.107.109',
+  port: 587,
+  timeout: 10000,
+});
+
+socket.on('connect', () => {
+  console.log('SMTP TCP connection successful');
+  socket.end();
+});
+
+socket.on('timeout', () => {
+  console.error('SMTP TCP connection timed out');
+  socket.destroy();
+});
+
+socket.on('error', (error) => {
+  console.error('SMTP TCP connection error:', error.message);
+});
 
 
 // ============================================================
