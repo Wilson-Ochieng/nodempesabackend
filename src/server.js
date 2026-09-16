@@ -7,6 +7,21 @@ const mpesaRoutes = require('./routes/mpesaRoutes');
 const emailRoutes = require('./routes/emailRoutes');
 
 const app = express();
+const dns = require('dns');
+
+dns.lookup(
+  'smtp.gmail.com',
+  { family: 4 },
+  (error, address, family) => {
+    if (error) {
+      console.error('IPv4 DNS ERROR:', error.message);
+      return;
+    }
+
+    console.log('Gmail IPv4:', address);
+    console.log('IP Family:', family);
+  }
+);
 
 
 // ============================================================
