@@ -1,19 +1,20 @@
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT || 587),
-  secure: process.env.SMTP_SECURE === 'true',
+    host: '74.125.199.108',
+    port: 587,
+    secure: false,
+    family: 4,
 
-  // Prefer IPv4 on Render
-  family: 4,
+    tls: {
+        servername: 'smtp.gmail.com',
+    },
 
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
+    auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+    },
 });
-
 // ============================================================
 // SMTP CONNECTION VERIFICATION
 // ============================================================
