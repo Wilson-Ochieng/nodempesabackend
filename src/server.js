@@ -50,6 +50,9 @@ app.use('/api/email', emailRoutes);
 // ============================================================
 
 const PORT = process.env.PORT || 10000;
+const { verifyEmailConnection } = require('./services/emailService');
+
+verifyEmailConnection();
 
 app.listen(
   PORT,
