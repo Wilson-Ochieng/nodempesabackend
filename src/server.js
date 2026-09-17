@@ -5,6 +5,12 @@ const cors = require('cors');
 
 const mpesaRoutes = require('./routes/mpesaRoutes');
 const emailRoutes = require('./routes/emailRoutes');
+const notificationRoutes =
+  require('./routes/notificationRoutes');
+const { messaging } = require('./services/firebaseAdmin');
+
+
+console.log('Firebase Admin initialized successfully');
 
 const app = express();
 
@@ -45,6 +51,10 @@ app.use(
   mpesaRoutes
 );
 app.use('/api/email', emailRoutes);
+app.use(
+  '/api/notifications',
+  notificationRoutes
+);
 
 
 // ============================================================

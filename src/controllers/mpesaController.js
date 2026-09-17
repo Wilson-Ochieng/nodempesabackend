@@ -9,6 +9,17 @@ const {
   sendPaymentConfirmationEmail,
 } = require('../services/emailService');
 
+const {
+  getUserFcmToken,
+} = require('../services/userService');
+
+const {
+  sendPushNotification,
+} = require('../services/notificationService');
+const {
+  markOrderAsPaid,
+} = require('../services/orderService');
+
 async function stkPush(req, res) {
   try {
     const {
@@ -17,6 +28,7 @@ async function stkPush(req, res) {
       orderId,
       customerName,
       customerEmail,
+      customerUid,
     } = req.body;
 
     if (!phoneNumber) {
@@ -37,6 +49,13 @@ async function stkPush(req, res) {
       return res.status(400).json({
         success: false,
         message: 'Valid customer email is required',
+      });
+    }
+
+    if (!customerUid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer UID is required',
       });
     }
 
@@ -79,6 +98,7 @@ async function stkPush(req, res) {
       phoneNumber,
       customerName,
       customerEmail,
+      customerUid,
     });
 
     return res.status(200).json({
@@ -92,16 +112,32 @@ async function stkPush(req, res) {
     });
   } catch (error) {
     console.error(
-      'M-Pesa STK Push Error:',
-      error.response?.data || error.message
+      'M-Pesa Daraja Error Status:',
+      error.response?.status
+    );
+
+    console.error(
+      'M-Pesa Daraja Error Response:',
+      JSON.stringify(
+        error.response?.data,
+        null,
+        2
+      )
+    );
+
+    console.error(
+      'M-Pesa Error Message:',
+      error.message
     );
 
     return res.status(500).json({
       success: false,
       message: 'Failed to initiate M-Pesa payment',
+      error: error.response?.data || error.message,
     });
   }
 }
+
 
 async function mpesaCallback(req, res) {
   try {
@@ -121,18 +157,31 @@ async function mpesaCallback(req, res) {
 
     const checkoutRequestId = callback.CheckoutRequestID;
 
+    // ==========================================================
+    // PAYMENT SUCCESSFUL
+    // ==========================================================
 
     if (callback.ResultCode === 0) {
-      const items = callback.CallbackMetadata?.Item || [];
+      const items =
+        callback.CallbackMetadata?.Item || [];
 
       const getMetadata = (name) =>
-        items.find((item) => item.Name === name)?.Value;
+        items.find(
+          (item) => item.Name === name
+        )?.Value;
 
-      const receiptNumber = getMetadata('MpesaReceiptNumber');
-      const transactionDate = getMetadata('TransactionDate');
+      const receiptNumber =
+        getMetadata('MpesaReceiptNumber');
 
-      // Get the existing payment before updating it.
-      const existingPayment = getPayment(checkoutRequestId);
+      const transactionDate =
+        getMetadata('TransactionDate');
+
+      // --------------------------------------------------------
+      // GET EXISTING PAYMENT
+      // --------------------------------------------------------
+
+      const existingPayment =
+        getPayment(checkoutRequestId);
 
       if (!existingPayment) {
         console.error(
@@ -142,65 +191,177 @@ async function mpesaCallback(req, res) {
 
         return res.status(200).json({
           ResultCode: 0,
-          ResultDesc: 'Callback received but payment was not found',
+          ResultDesc:
+            'Callback received but payment was not found',
         });
       }
 
-      // Prevent duplicate payment emails if Safaricom
-      // sends the callback more than once.
-      const alreadyPaid = existingPayment.status === 'paid';
+      // --------------------------------------------------------
+      // PREVENT DUPLICATE PROCESSING
+      // --------------------------------------------------------
 
-      const payment = updatePayment(checkoutRequestId, {
-        status: 'paid',
-        message: 'Payment received successfully.',
-        receiptNumber,
-        transactionDate,
-      });
+      const alreadyPaid =
+        existingPayment.status === 'paid';
 
-      console.log('Payment successful:', payment);
+      if (alreadyPaid) {
+        console.log(
+          `Duplicate callback ignored for order ${existingPayment.orderId}`
+        );
 
-      if (!alreadyPaid) {
-        try {
-          await sendPaymentConfirmationEmail({
-            customerName: payment.customerName,
-            customerEmail: payment.customerEmail,
-            orderId: payment.orderId,
-            total: payment.amount,
-            receiptNumber,
+        return res.status(200).json({
+          ResultCode: 0,
+          ResultDesc: 'Callback already processed',
+        });
+      }
+
+      // --------------------------------------------------------
+      // UPDATE PAYMENT RECORD
+      // --------------------------------------------------------
+
+      const payment = updatePayment(
+        checkoutRequestId,
+        {
+          status: 'paid',
+          message: 'Payment received successfully.',
+          receiptNumber,
+          transactionDate,
+        }
+      );
+
+      console.log(
+        'Payment successful:',
+        payment
+      );
+
+      // --------------------------------------------------------
+      // UPDATE FIRESTORE ORDER
+      // --------------------------------------------------------
+
+      try {
+        await markOrderAsPaid({
+          userId: payment.customerUid,
+          orderId: payment.orderId,
+        });
+
+        console.log(
+          `Firestore order ${payment.orderId} updated successfully`
+        );
+      } catch (orderError) {
+        console.error(
+          'Firestore order update failed:',
+          orderError.message
+        );
+      }
+
+      // --------------------------------------------------------
+      // SEND PAYMENT CONFIRMATION EMAIL
+      // --------------------------------------------------------
+
+      try {
+        await sendPaymentConfirmationEmail({
+          customerName: payment.customerName,
+          customerEmail: payment.customerEmail,
+          orderId: payment.orderId,
+          total: payment.amount,
+          receiptNumber,
+        });
+
+        console.log(
+          `Payment confirmation email sent for order ${payment.orderId}`
+        );
+      } catch (emailError) {
+        console.error(
+          'Payment confirmation email failed:',
+          emailError.message
+        );
+      }
+
+      // --------------------------------------------------------
+      // SEND FCM NOTIFICATION
+      // --------------------------------------------------------
+
+      try {
+        const fcmToken =
+          await getUserFcmToken(
+            payment.customerUid
+          );
+
+        if (!fcmToken) {
+          console.log(
+            `No FCM token found for user ${payment.customerUid}`
+          );
+        } else {
+          await sendPushNotification({
+            token: fcmToken,
+            title: 'Payment Successful',
+            body:
+              `Your payment of KES ${payment.amount} ` +
+              `for order ${payment.orderId} ` +
+              `has been received successfully.`,
+            data: {
+              type: 'payment_success',
+              orderId: payment.orderId,
+              receiptNumber: payment.receiptNumber,
+            },
           });
 
           console.log(
-            `Payment confirmation email sent for order ${payment.orderId}`
-          );
-        } catch (emailError) {
-
-          console.error(
-            'Payment confirmation email failed:',
-            emailError.message
+            `Payment notification sent for order ${payment.orderId}`
           );
         }
-      } else {
-        console.log(
-          `Duplicate callback ignored for order ${existingPayment.orderId}`
+      } catch (notificationError) {
+        console.error(
+          'Payment notification failed:',
+          notificationError.message
         );
       }
     }
 
-    else {
-      updatePayment(checkoutRequestId, {
-        status: 'failed',
-        message: callback.ResultDesc || 'M-Pesa payment failed.',
-      });
+    // ==========================================================
+    // PAYMENT FAILED
+    // ==========================================================
 
-      console.log('Payment failed:', callback.ResultDesc);
+    else {
+      const existingPayment =
+        getPayment(checkoutRequestId);
+
+      if (existingPayment) {
+        updatePayment(
+          checkoutRequestId,
+          {
+            status: 'failed',
+            message:
+              callback.ResultDesc ||
+              'M-Pesa payment failed.',
+          }
+        );
+
+        console.log(
+          'Payment failed:',
+          callback.ResultDesc
+        );
+      } else {
+        console.error(
+          'Payment not found for failed callback:',
+          checkoutRequestId
+        );
+      }
     }
+
+    // ==========================================================
+    // ACKNOWLEDGE CALLBACK TO SAFARICOM
+    // ==========================================================
 
     return res.status(200).json({
       ResultCode: 0,
       ResultDesc: 'Callback received successfully',
     });
+
   } catch (error) {
-    console.error('Callback Error:', error.message);
+    console.error(
+      'Callback Error:',
+      error.message
+    );
 
     return res.status(500).json({
       ResultCode: 1,
