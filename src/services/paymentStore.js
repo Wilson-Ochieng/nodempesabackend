@@ -1,6 +1,10 @@
-const payments = new Map();
+const { firestore } = require('./firebaseAdmin');
 
-function createPayment({
+// ============================================================
+// CREATE PAYMENT
+// ============================================================
+
+async function createPayment({
   orderId,
   checkoutRequestId,
   merchantRequestId,
@@ -10,7 +14,15 @@ function createPayment({
   customerEmail,
   customerUid,
 }) {
-  payments.set(checkoutRequestId, {
+  if (!checkoutRequestId) {
+    throw new Error('Checkout Request ID is required');
+  }
+
+  const paymentRef = firestore
+    .collection('payments')
+    .doc(checkoutRequestId);
+
+  await paymentRef.set({
     orderId,
     checkoutRequestId,
     merchantRequestId,
@@ -19,36 +31,105 @@ function createPayment({
     customerName,
     customerEmail,
     customerUid,
+
     status: 'pending',
-    message: 'STK Push sent. Waiting for payment.',
+
+    message:
+      'STK Push sent. Waiting for payment.',
+
     receiptNumber: null,
     transactionDate: null,
+
+    createdAt:
+      new Date(),
+
+    updatedAt:
+      new Date(),
   });
+
+  console.log(
+    `Payment ${checkoutRequestId} created in Firestore`
+  );
+
+  return true;
 }
 
-function updatePayment(checkoutRequestId, data) {
-  const payment = payments.get(checkoutRequestId);
+// ============================================================
+// UPDATE PAYMENT
+// ============================================================
 
-  if (!payment) {
+async function updatePayment(
+  checkoutRequestId,
+  data,
+) {
+  if (!checkoutRequestId) {
+    throw new Error(
+      'Checkout Request ID is required'
+    );
+  }
+
+  const paymentRef = firestore
+    .collection('payments')
+    .doc(checkoutRequestId);
+
+  const snapshot =
+    await paymentRef.get();
+
+  if (!snapshot.exists) {
+    console.log(
+      `Payment not found: ${checkoutRequestId}`
+    );
+
     return null;
   }
 
-  const updatedPayment = {
-    ...payment,
+  await paymentRef.update({
     ...data,
-  };
+    updatedAt:
+      new Date(),
+  });
 
-  payments.set(
-    checkoutRequestId,
-    updatedPayment
+  const updatedSnapshot =
+    await paymentRef.get();
+
+  const updatedPayment =
+    updatedSnapshot.data();
+
+  console.log(
+    `Payment ${checkoutRequestId} updated: ${updatedPayment.status}`
   );
 
   return updatedPayment;
 }
 
-function getPayment(checkoutRequestId) {
-  return payments.get(checkoutRequestId);
+// ============================================================
+// GET PAYMENT
+// ============================================================
+
+async function getPayment(
+  checkoutRequestId,
+) {
+  if (!checkoutRequestId) {
+    return null;
+  }
+
+  const paymentRef = firestore
+    .collection('payments')
+    .doc(checkoutRequestId);
+
+  const snapshot =
+    await paymentRef.get();
+
+  if (!snapshot.exists) {
+    return null;
+  }
+
+  return snapshot.data();
 }
+
+// ============================================================
+// EXPORTS
+// ============================================================
 
 module.exports = {
   createPayment,

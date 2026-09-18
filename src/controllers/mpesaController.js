@@ -1,4 +1,5 @@
 const { initiateSTKPush } = require('../services/mpesaService');
+
 const {
   createPayment,
   updatePayment,
@@ -16,9 +17,15 @@ const {
 const {
   sendPushNotification,
 } = require('../services/notificationService');
+
 const {
   markOrderAsPaid,
 } = require('../services/orderService');
+
+
+// ==========================================================
+// STK PUSH
+// ==========================================================
 
 async function stkPush(req, res) {
   try {
@@ -30,6 +37,10 @@ async function stkPush(req, res) {
       customerEmail,
       customerUid,
     } = req.body;
+
+    // ------------------------------------------------------
+    // VALIDATION
+    // ------------------------------------------------------
 
     if (!phoneNumber) {
       return res.status(400).json({
@@ -45,7 +56,10 @@ async function stkPush(req, res) {
       });
     }
 
-    if (!customerEmail || !customerEmail.includes('@')) {
+    if (
+      !customerEmail ||
+      !customerEmail.includes('@')
+    ) {
       return res.status(400).json({
         success: false,
         message: 'Valid customer email is required',
@@ -58,8 +72,6 @@ async function stkPush(req, res) {
         message: 'Customer UID is required',
       });
     }
-
-
 
     if (!amount || amount <= 0) {
       return res.status(400).json({
@@ -75,25 +87,38 @@ async function stkPush(req, res) {
       });
     }
 
+    // ------------------------------------------------------
+    // INITIATE STK PUSH
+    // ------------------------------------------------------
+
     const result = await initiateSTKPush({
       phoneNumber,
       amount,
       accountReference: orderId,
-      transactionDescription: `Payment for order ${orderId}`,
+      transactionDescription:
+        `Payment for order ${orderId}`,
     });
 
     if (result.ResponseCode !== '0') {
       return res.status(400).json({
         success: false,
-        message: result.ResponseDescription || 'STK Push failed',
+        message:
+          result.ResponseDescription ||
+          'STK Push failed',
         data: result,
       });
     }
 
-    createPayment({
+    // ------------------------------------------------------
+    // SAVE PAYMENT
+    // ------------------------------------------------------
+
+    await createPayment({
       orderId,
-      checkoutRequestId: result.CheckoutRequestID,
-      merchantRequestId: result.MerchantRequestID,
+      checkoutRequestId:
+        result.CheckoutRequestID,
+      merchantRequestId:
+        result.MerchantRequestID,
       amount,
       phoneNumber,
       customerName,
@@ -101,16 +126,32 @@ async function stkPush(req, res) {
       customerUid,
     });
 
+    console.log(
+      `Payment ${result.CheckoutRequestID} saved successfully`
+    );
+
+    // ------------------------------------------------------
+    // RESPONSE
+    // ------------------------------------------------------
+
     return res.status(200).json({
       success: true,
-      message: 'STK Push initiated successfully',
+      message:
+        'STK Push initiated successfully',
       data: {
-        checkoutRequestId: result.CheckoutRequestID,
-        merchantRequestId: result.MerchantRequestID,
-        customerMessage: result.CustomerMessage,
+        checkoutRequestId:
+          result.CheckoutRequestID,
+
+        merchantRequestId:
+          result.MerchantRequestID,
+
+        customerMessage:
+          result.CustomerMessage,
       },
     });
+
   } catch (error) {
+
     console.error(
       'M-Pesa Daraja Error Status:',
       error.response?.status
@@ -132,58 +173,92 @@ async function stkPush(req, res) {
 
     return res.status(500).json({
       success: false,
-      message: 'Failed to initiate M-Pesa payment',
-      error: error.response?.data || error.message,
+      message:
+        'Failed to initiate M-Pesa payment',
+      error:
+        error.response?.data ||
+        error.message,
     });
   }
 }
 
 
+// ==========================================================
+// M-PESA CALLBACK
+// ==========================================================
+
 async function mpesaCallback(req, res) {
+
   try {
+
     console.log(
       'M-Pesa Callback:',
-      JSON.stringify(req.body, null, 2)
+      JSON.stringify(
+        req.body,
+        null,
+        2
+      )
     );
 
-    const callback = req.body?.Body?.stkCallback;
+    const callback =
+      req.body?.Body?.stkCallback;
+
+    // ------------------------------------------------------
+    // INVALID CALLBACK
+    // ------------------------------------------------------
 
     if (!callback) {
+
       return res.status(400).json({
         ResultCode: 1,
-        ResultDesc: 'Invalid callback payload',
+        ResultDesc:
+          'Invalid callback payload',
       });
+
     }
 
-    const checkoutRequestId = callback.CheckoutRequestID;
+    const checkoutRequestId =
+      callback.CheckoutRequestID;
 
-    // ==========================================================
+
+    // ======================================================
     // PAYMENT SUCCESSFUL
-    // ==========================================================
+    // ======================================================
 
     if (callback.ResultCode === 0) {
+
       const items =
-        callback.CallbackMetadata?.Item || [];
+        callback.CallbackMetadata?.Item ||
+        [];
 
       const getMetadata = (name) =>
         items.find(
-          (item) => item.Name === name
+          (item) =>
+            item.Name === name
         )?.Value;
 
       const receiptNumber =
-        getMetadata('MpesaReceiptNumber');
+        getMetadata(
+          'MpesaReceiptNumber'
+        );
 
       const transactionDate =
-        getMetadata('TransactionDate');
+        getMetadata(
+          'TransactionDate'
+        );
 
-      // --------------------------------------------------------
-      // GET EXISTING PAYMENT
-      // --------------------------------------------------------
+
+      // ----------------------------------------------------
+      // GET PAYMENT FROM FIRESTORE
+      // ----------------------------------------------------
 
       const existingPayment =
-        getPayment(checkoutRequestId);
+        await getPayment(
+          checkoutRequestId
+        );
 
       if (!existingPayment) {
+
         console.error(
           'Payment not found for checkout request:',
           checkoutRequestId
@@ -194,142 +269,199 @@ async function mpesaCallback(req, res) {
           ResultDesc:
             'Callback received but payment was not found',
         });
+
       }
 
-      // --------------------------------------------------------
-      // PREVENT DUPLICATE PROCESSING
-      // --------------------------------------------------------
 
-      const alreadyPaid =
-        existingPayment.status === 'paid';
+      // ----------------------------------------------------
+      // PREVENT DUPLICATE CALLBACK
+      // ----------------------------------------------------
 
-      if (alreadyPaid) {
+      if (
+        existingPayment.status === 'paid'
+      ) {
+
         console.log(
           `Duplicate callback ignored for order ${existingPayment.orderId}`
         );
 
         return res.status(200).json({
           ResultCode: 0,
-          ResultDesc: 'Callback already processed',
+          ResultDesc:
+            'Callback already processed',
         });
+
       }
 
-      // --------------------------------------------------------
-      // UPDATE PAYMENT RECORD
-      // --------------------------------------------------------
 
-      const payment = updatePayment(
-        checkoutRequestId,
-        {
-          status: 'paid',
-          message: 'Payment received successfully.',
-          receiptNumber,
-          transactionDate,
-        }
-      );
+      // ----------------------------------------------------
+      // UPDATE PAYMENT
+      // ----------------------------------------------------
+
+      const payment =
+        await updatePayment(
+          checkoutRequestId,
+          {
+            status: 'paid',
+
+            message:
+              'Payment received successfully.',
+
+            receiptNumber,
+
+            transactionDate,
+          }
+        );
+
 
       console.log(
         'Payment successful:',
         payment
       );
 
-      // --------------------------------------------------------
+
+      // ====================================================
       // UPDATE FIRESTORE ORDER
-      // --------------------------------------------------------
+      // ====================================================
 
       try {
+
         await markOrderAsPaid({
-          userId: payment.customerUid,
-          orderId: payment.orderId,
+          userId:
+            payment.customerUid,
+
+          orderId:
+            payment.orderId,
         });
 
         console.log(
           `Firestore order ${payment.orderId} updated successfully`
         );
+
       } catch (orderError) {
+
         console.error(
           'Firestore order update failed:',
           orderError.message
         );
+
       }
 
-      // --------------------------------------------------------
-      // SEND PAYMENT CONFIRMATION EMAIL
-      // --------------------------------------------------------
+
+      // ====================================================
+      // SEND PAYMENT EMAIL
+      // ====================================================
 
       try {
+
         await sendPaymentConfirmationEmail({
-          customerName: payment.customerName,
-          customerEmail: payment.customerEmail,
-          orderId: payment.orderId,
-          total: payment.amount,
+          customerName:
+            payment.customerName,
+
+          customerEmail:
+            payment.customerEmail,
+
+          orderId:
+            payment.orderId,
+
+          total:
+            payment.amount,
+
           receiptNumber,
         });
 
         console.log(
           `Payment confirmation email sent for order ${payment.orderId}`
         );
+
       } catch (emailError) {
+
         console.error(
           'Payment confirmation email failed:',
           emailError.message
         );
+
       }
 
-      // --------------------------------------------------------
+
+      // ====================================================
       // SEND FCM NOTIFICATION
-      // --------------------------------------------------------
+      // ====================================================
 
       try {
+
         const fcmToken =
           await getUserFcmToken(
             payment.customerUid
           );
 
         if (!fcmToken) {
+
           console.log(
             `No FCM token found for user ${payment.customerUid}`
           );
+
         } else {
+
           await sendPushNotification({
             token: fcmToken,
-            title: 'Payment Successful',
+
+            title:
+              'Payment Successful',
+
             body:
               `Your payment of KES ${payment.amount} ` +
               `for order ${payment.orderId} ` +
               `has been received successfully.`,
+
             data: {
-              type: 'payment_success',
-              orderId: payment.orderId,
-              receiptNumber: payment.receiptNumber,
+              type:
+                'payment_success',
+
+              orderId:
+                payment.orderId,
+
+              receiptNumber:
+                payment.receiptNumber,
             },
           });
 
           console.log(
             `Payment notification sent for order ${payment.orderId}`
           );
+
         }
+
       } catch (notificationError) {
+
         console.error(
           'Payment notification failed:',
           notificationError.message
         );
+
       }
+
     }
 
-    // ==========================================================
+
+    // ======================================================
     // PAYMENT FAILED
-    // ==========================================================
+    // ======================================================
 
     else {
+
       const existingPayment =
-        getPayment(checkoutRequestId);
+        await getPayment(
+          checkoutRequestId
+        );
 
       if (existingPayment) {
-        updatePayment(
+
+        await updatePayment(
           checkoutRequestId,
           {
             status: 'failed',
+
             message:
               callback.ResultDesc ||
               'M-Pesa payment failed.',
@@ -340,24 +472,32 @@ async function mpesaCallback(req, res) {
           'Payment failed:',
           callback.ResultDesc
         );
+
       } else {
+
         console.error(
           'Payment not found for failed callback:',
           checkoutRequestId
         );
+
       }
+
     }
 
-    // ==========================================================
-    // ACKNOWLEDGE CALLBACK TO SAFARICOM
-    // ==========================================================
+
+    // ======================================================
+    // ACKNOWLEDGE CALLBACK
+    // ======================================================
 
     return res.status(200).json({
       ResultCode: 0,
-      ResultDesc: 'Callback received successfully',
+      ResultDesc:
+        'Callback received successfully',
     });
 
+
   } catch (error) {
+
     console.error(
       'Callback Error:',
       error.message
@@ -365,28 +505,74 @@ async function mpesaCallback(req, res) {
 
     return res.status(500).json({
       ResultCode: 1,
-      ResultDesc: 'Callback processing failed',
+      ResultDesc:
+        'Callback processing failed',
     });
+
   }
 }
+
+
+// ==========================================================
+// PAYMENT STATUS
+// ==========================================================
 
 async function paymentStatus(req, res) {
-  const { checkoutRequestId } = req.params;
 
-  const payment = getPayment(checkoutRequestId);
+  try {
 
-  if (!payment) {
-    return res.status(404).json({
-      success: false,
-      message: 'Payment not found',
+    const {
+      checkoutRequestId,
+    } = req.params;
+
+    console.log(
+      `Checking payment status: ${checkoutRequestId}`
+    );
+
+    const payment =
+      await getPayment(
+        checkoutRequestId
+      );
+
+    if (!payment) {
+
+      return res.status(404).json({
+        success: false,
+        message:
+          'Payment not found',
+      });
+
+    }
+
+    console.log(
+      `Payment status for ${checkoutRequestId}: ${payment.status}`
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: payment,
     });
-  }
 
-  return res.status(200).json({
-    success: true,
-    data: payment,
-  });
+  } catch (error) {
+
+    console.error(
+      'Payment status error:',
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        'Unable to retrieve payment status',
+    });
+
+  }
 }
+
+
+// ==========================================================
+// EXPORTS
+// ==========================================================
 
 module.exports = {
   stkPush,
